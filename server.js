@@ -44,6 +44,28 @@ Text: ${text}`
   }
 });
 
+
+app.post('/interpret', async (req, res) => {
+  const { text, fromLang, toLang, mode } = req.body;
+  if (!text || !fromLang || !toLang) {
+    return res.status(400).json({ error: 'Missing text, fromLang or toLang' });
+  }
+  try {
+    const message = await client.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: 'You are a medical interpreter. Translate from ' + fromLang + ' to ' + toLang + '. Return ONLY the translated text, nothing else. Text: ' + text
+      }]
+    });
+    const translated = message.content[0].text.trim();
+    res.json({ translated });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/whisper', upload.single('audio'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No audio file provided' });
