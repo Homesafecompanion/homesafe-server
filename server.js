@@ -53,7 +53,7 @@ app.post('/interpret', async (req, res) => {
 });
 
 // ===== WHISPER =====
-app.post('/transcribe', async (req, res) => {
+app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file' });
     const { OpenAI } = require('openai');
