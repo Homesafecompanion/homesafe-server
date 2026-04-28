@@ -162,5 +162,26 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => { delete clients[id]; });
 });
 
+
+app.post('/speak', async (req, res) => {
+  const { text, language } = req.body;
+  if (!text) return res.status(400).json({ error: 'No text' });
+  try {
+    const { OpenAI } = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const mp3 = await openai.audio.speech.create({
+      model: 'tts-1',
+      voice: 'nova',
+      input: text,
+      speed: 0.9,
+    });
+    const buffer = Buffer.from(await mp3.arrayBuffer());
+    res.set('Content-Type', 'audio/mpeg');
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`HomeSafe Server running on port ${PORT}`));
