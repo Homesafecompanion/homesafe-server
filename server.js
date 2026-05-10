@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -5,6 +7,8 @@ const { WebSocketServer } = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const http = require('http');
 const multer = require('multer');
+const { Pool } = require('pg');
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
@@ -13,15 +17,84 @@ app.use(express.json());
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Base de dados em memória
-const rooms = {}; // código -> { idoso, familiar, dados }
-const messages = {}; // código -> [mensagens]
-
-// ===== TRADUÇÃO =====
-app.get('/', (req, res) => {
-  res.json({ status: 'HomeSafe Server running!' });
+// ===== POSTGRESQL =====
+const isLocalDb = (process.env.DATABASE_URL || '').includes('localhost');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: isLocalDb ? false : { rejectUnauthorized: false },
 });
 
+let dbReady = false;
+
+pool.on('error', (err) => {
+  console.error('[pg] idle client error', err.message);
+});
+
+const log = (...parts) => console.log(`[${new Date().toISOString()}]`, ...parts);
+
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS families (
+      code        CHAR(8) PRIMARY KEY,
+      idoso       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      dados       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS familiares (
+      id           UUID PRIMARY KEY,
+      family_code  CHAR(8) NOT NULL REFERENCES families(code) ON DELETE CASCADE,
+      name         TEXT NOT NULL,
+      joined_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_familiares_code ON familiares(family_code);
+    CREATE TABLE IF NOT EXISTS messages (
+      id           UUID PRIMARY KEY,
+      family_code  CHAR(8) NOT NULL REFERENCES families(code) ON DELETE CASCADE,
+      message      TEXT NOT NULL,
+      sender       TEXT,
+      sender_name  TEXT,
+      ts           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_code_ts ON messages(family_code, ts DESC);
+    CREATE TABLE IF NOT EXISTS sos_events (
+      id           UUID PRIMARY KEY,
+      family_code  CHAR(8) NOT NULL REFERENCES families(code) ON DELETE CASCADE,
+      type         TEXT,
+      location     JSONB,
+      profile      JSONB,
+      ts           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_sos_events_code_ts ON sos_events(family_code, ts DESC);
+  `);
+  dbReady = true;
+  log('[db] schema ready');
+}
+
+const newCode = () => Math.floor(10000000 + Math.random() * 90000000).toString();
+
+async function familyExists(code) {
+  const r = await pool.query('SELECT 1 FROM families WHERE code = $1', [code]);
+  return r.rowCount > 0;
+}
+
+// ===== HEALTHCHECK =====
+app.get('/', async (req, res) => {
+  let db = 'unknown';
+  try {
+    await pool.query('SELECT 1');
+    db = 'ok';
+  } catch (e) {
+    db = 'down';
+  }
+  res.json({
+    status: 'HomeSafe Server running!',
+    db,
+    uptime: Math.round(process.uptime()),
+  });
+});
+
+// ===== TRADUÇÃO =====
 app.post('/translate', async (req, res) => {
   const { text, targetLang } = req.body;
   if (!text || !targetLang) return res.status(400).json({ error: 'Missing parameters' });
@@ -69,102 +142,174 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
 });
 
 // ===== LIGAÇÃO FAMILIAR =====
-app.post('/family/create', (req, res) => {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const { profile } = req.body;
-  rooms[code] = { idoso: profile, familiares: [], dados: {}, createdAt: new Date() };
-  messages[code] = [];
-  res.json({ code });
+app.post('/family/create', async (req, res, next) => {
+  try {
+    const { profile } = req.body;
+    if (!profile || typeof profile !== 'object') {
+      return res.status(400).json({ error: 'Missing profile' });
+    }
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = newCode();
+      try {
+        await pool.query(
+          'INSERT INTO families (code, idoso) VALUES ($1, $2)',
+          [code, profile]
+        );
+        log('family/create', code);
+        return res.json({ code });
+      } catch (err) {
+        if (err.code === '23505') continue; // unique_violation, retry
+        throw err;
+      }
+    }
+    res.status(500).json({ error: 'Could not allocate unique code' });
+  } catch (e) { next(e); }
 });
 
-app.post('/family/join', (req, res) => {
-  const { code, name } = req.body;
-  if (!rooms[code]) return res.status(404).json({ error: 'Código inválido!' });
-  const familiar = { id: uuidv4(), name, joinedAt: new Date() };
-  rooms[code].familiares.push(familiar);
-  res.json({ success: true, familiar, idoso: rooms[code].idoso });
+app.post('/family/join', async (req, res, next) => {
+  try {
+    const { code, name } = req.body;
+    if (!code || !name) return res.status(400).json({ error: 'Missing parameters' });
+    const fam = await pool.query('SELECT idoso FROM families WHERE code = $1', [code]);
+    if (fam.rowCount === 0) return res.status(404).json({ error: 'Código inválido!' });
+    const id = uuidv4();
+    const ins = await pool.query(
+      `INSERT INTO familiares (id, family_code, name) VALUES ($1, $2, $3)
+       RETURNING id, name, joined_at AS "joinedAt"`,
+      [id, code, name]
+    );
+    log('family/join', code, name);
+    res.json({ success: true, familiar: ins.rows[0], idoso: fam.rows[0].idoso });
+  } catch (e) { next(e); }
 });
 
-app.get('/family/status/:code', (req, res) => {
-  const room = rooms[req.params.code];
-  if (!room) return res.status(404).json({ error: 'Não encontrado' });
-  res.json(room);
+app.get('/family/status/:code', async (req, res, next) => {
+  try {
+    const code = req.params.code;
+    const fam = await pool.query(
+      'SELECT idoso, dados, created_at AS "createdAt" FROM families WHERE code = $1',
+      [code]
+    );
+    if (fam.rowCount === 0) return res.status(404).json({ error: 'Não encontrado' });
+    const familiares = await pool.query(
+      `SELECT id, name, joined_at AS "joinedAt" FROM familiares
+       WHERE family_code = $1 ORDER BY joined_at ASC`,
+      [code]
+    );
+    res.json({
+      idoso: fam.rows[0].idoso,
+      familiares: familiares.rows,
+      dados: fam.rows[0].dados,
+      createdAt: fam.rows[0].createdAt,
+    });
+  } catch (e) { next(e); }
 });
 
 // ===== DADOS DO IDOSO =====
-app.post('/family/update', (req, res) => {
-  const { code, dados } = req.body;
-  if (!rooms[code]) return res.status(404).json({ error: 'Código inválido' });
-  rooms[code].dados = { ...rooms[code].dados, ...dados, updatedAt: new Date() };
-  res.json({ success: true });
+app.post('/family/update', async (req, res, next) => {
+  try {
+    const { code, dados } = req.body;
+    if (!code || !dados || typeof dados !== 'object') {
+      return res.status(400).json({ error: 'Missing parameters' });
+    }
+    const merged = { ...dados, updatedAt: new Date().toISOString() };
+    const upd = await pool.query(
+      `UPDATE families
+       SET dados = dados || $1::jsonb, updated_at = NOW()
+       WHERE code = $2`,
+      [JSON.stringify(merged), code]
+    );
+    if (upd.rowCount === 0) return res.status(404).json({ error: 'Código inválido' });
+    res.json({ success: true });
+  } catch (e) { next(e); }
 });
 
-app.get('/family/dados/:code', (req, res) => {
-  const room = rooms[req.params.code];
-  if (!room) return res.status(404).json({ error: 'Não encontrado' });
-  res.json(room.dados);
+app.get('/family/dados/:code', async (req, res, next) => {
+  try {
+    const r = await pool.query('SELECT dados FROM families WHERE code = $1', [req.params.code]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Não encontrado' });
+    res.json(r.rows[0].dados);
+  } catch (e) { next(e); }
 });
 
 // ===== MENSAGENS CHAT =====
-app.post('/family/message', (req, res) => {
-  const { code, message, sender, senderName } = req.body;
-  if (!messages[code]) return res.status(404).json({ error: 'Código inválido' });
-  const msg = { id: uuidv4(), message, sender, senderName, timestamp: new Date() };
-  messages[code].push(msg);
-  if (messages[code].length > 100) messages[code] = messages[code].slice(-100);
-  res.json({ success: true, msg });
+async function persistMessage(code, message, sender, senderName) {
+  const id = uuidv4();
+  const r = await pool.query(
+    `INSERT INTO messages (id, family_code, message, sender, sender_name)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, message, sender, sender_name AS "senderName", ts AS "timestamp"`,
+    [id, code, message, sender ?? null, senderName ?? null]
+  );
+  return r.rows[0];
+}
+
+app.post('/family/message', async (req, res, next) => {
+  try {
+    const { code, message, sender, senderName } = req.body;
+    if (!code || !message) return res.status(400).json({ error: 'Missing parameters' });
+    if (!(await familyExists(code))) return res.status(404).json({ error: 'Código inválido' });
+    const msg = await persistMessage(code, message, sender, senderName);
+    res.json({ success: true, msg });
+  } catch (e) { next(e); }
 });
 
-app.get('/family/messages/:code', (req, res) => {
-  if (!messages[req.params.code]) return res.status(404).json({ error: 'Não encontrado' });
-  res.json(messages[req.params.code]);
+app.get('/family/messages/:code', async (req, res, next) => {
+  try {
+    const code = req.params.code;
+    if (!(await familyExists(code))) return res.status(404).json({ error: 'Não encontrado' });
+    const r = await pool.query(
+      `SELECT id, message, sender, sender_name AS "senderName", ts AS "timestamp"
+       FROM messages WHERE family_code = $1
+       ORDER BY ts ASC LIMIT 100`,
+      [code]
+    );
+    res.json(r.rows);
+  } catch (e) { next(e); }
 });
 
 // ===== SOS ALERTA =====
-app.post('/family/sos', (req, res) => {
-  const { code, location, profile, type } = req.body;
-  if (!rooms[code]) return res.status(404).json({ error: 'Código inválido' });
-  rooms[code].dados.lastSOS = { location, profile, type, timestamp: new Date() };
-  res.json({ success: true });
+app.post('/family/sos', async (req, res, next) => {
+  try {
+    const { code, location, profile, type } = req.body;
+    if (!code) return res.status(400).json({ error: 'Missing code' });
+    if (!(await familyExists(code))) return res.status(404).json({ error: 'Código inválido' });
+    const id = uuidv4();
+    const ts = new Date().toISOString();
+    await pool.query(
+      `INSERT INTO sos_events (id, family_code, type, location, profile)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, code, type ?? null, location ?? null, profile ?? null]
+    );
+    const lastSOS = { location, profile, type, timestamp: ts };
+    await pool.query(
+      `UPDATE families
+       SET dados = dados || jsonb_build_object('lastSOS', $1::jsonb), updated_at = NOW()
+       WHERE code = $2`,
+      [JSON.stringify(lastSOS), code]
+    );
+    log('family/sos', code, type);
+    res.json({ success: true });
+  } catch (e) { next(e); }
 });
 
-const server = http.createServer(app);
-
-// ===== WEBSOCKET para chat em tempo real =====
-const wss = new WebSocketServer({ server });
-const clients = {};
-
-wss.on('connection', (ws, req) => {
-  const id = uuidv4();
-  clients[id] = ws;
-
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data);
-      if (msg.type === 'join') {
-        ws.code = msg.code;
-        ws.sender = msg.sender;
-        ws.senderName = msg.senderName;
-      }
-      if (msg.type === 'message' && ws.code) {
-        const newMsg = { id: uuidv4(), message: msg.message, sender: ws.sender, senderName: ws.senderName, timestamp: new Date() };
-        if (!messages[ws.code]) messages[ws.code] = [];
-        messages[ws.code].push(newMsg);
-        wss.clients.forEach(client => {
-          if (client.code === ws.code && client.readyState === 1) {
-            client.send(JSON.stringify({ type: 'message', ...newMsg }));
-          }
-        });
-      }
-    } catch (e) {}
-  });
-
-  ws.on('close', () => { delete clients[id]; });
+app.get('/family/sos/:code', async (req, res, next) => {
+  try {
+    const code = req.params.code;
+    if (!(await familyExists(code))) return res.status(404).json({ error: 'Não encontrado' });
+    const r = await pool.query(
+      `SELECT id, type, location, profile, ts AS "timestamp"
+       FROM sos_events WHERE family_code = $1
+       ORDER BY ts DESC LIMIT 100`,
+      [code]
+    );
+    res.json(r.rows);
+  } catch (e) { next(e); }
 });
 
-
+// ===== TTS =====
 app.post('/speak', async (req, res) => {
-  const { text, language } = req.body;
+  const { text } = req.body;
   if (!text) return res.status(400).json({ error: 'No text' });
   try {
     const { OpenAI } = require('openai');
@@ -183,5 +328,42 @@ app.post('/speak', async (req, res) => {
   }
 });
 
+// ===== ERROR HANDLER =====
+app.use((err, req, res, next) => {
+  console.error('[err]', req.method, req.path, err.message);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// ===== HTTP + WEBSOCKET =====
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws) => {
+  ws.on('message', async (data) => {
+    try {
+      const msg = JSON.parse(data);
+      if (msg.type === 'join') {
+        ws.code = msg.code;
+        ws.sender = msg.sender;
+        ws.senderName = msg.senderName;
+      }
+      if (msg.type === 'message' && ws.code) {
+        if (!(await familyExists(ws.code))) return;
+        const persisted = await persistMessage(ws.code, msg.message, ws.sender, ws.senderName);
+        wss.clients.forEach((c) => {
+          if (c.code === ws.code && c.readyState === 1) {
+            c.send(JSON.stringify({ type: 'message', ...persisted }));
+          }
+        });
+      }
+    } catch (e) {
+      console.error('[ws] error', e.message);
+    }
+  });
+});
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`HomeSafe Server running on port ${PORT}`));
+
+initDb().catch((e) => console.error('[db] init failed', e.message));
+
+server.listen(PORT, () => log(`HomeSafe Server running on port ${PORT}`));
