@@ -261,7 +261,7 @@ app.get('/family/messages/:code', async (req, res, next) => {
     const r = await pool.query(
       `SELECT id, message, sender, sender_name AS "senderName", ts AS "timestamp"
        FROM messages WHERE family_code = $1
-       ORDER BY ts ASC LIMIT 100`,
+       ORDER BY ts DESC LIMIT 100`,
       [code]
     );
     res.json(r.rows);
