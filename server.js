@@ -67,6 +67,85 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_sos_events_code_ts ON sos_events(family_code, ts DESC);
   `);
+
+  // ===== MULTI-CARER MIGRATION =====
+  // Adds role + status to familiares, promotes the oldest familiar per
+  // family to 'primary', and enforces "at most 1 primary per family" via
+  // a unique partial index. Idempotent — safe to re-run on every boot.
+
+  // 1) New columns. Defaults chosen so that EVERY incoming row is
+  //    'secondary' / 'active'; the UPDATE below then elects the primary
+  //    for legacy data. New /family/join inserts will land as 'secondary'
+  //    by default — promotion of "first joiner" is a route-level concern
+  //    that will be wired up separately, not here.
+  await pool.query(`
+    ALTER TABLE familiares
+      ADD COLUMN IF NOT EXISTS role   TEXT NOT NULL DEFAULT 'secondary';
+    ALTER TABLE familiares
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+  `);
+
+  // 2) CHECK constraints.
+  // Postgres ALTER TABLE ... ADD CONSTRAINT has no IF NOT EXISTS, so we
+  // wrap in DO blocks that skip when the constraint already exists.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'familiares_role_check'
+          AND conrelid = 'public.familiares'::regclass
+      ) THEN
+        ALTER TABLE familiares
+          ADD CONSTRAINT familiares_role_check
+          CHECK (role IN ('primary', 'secondary', 'viewer'));
+      END IF;
+    END
+    $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'familiares_status_check'
+          AND conrelid = 'public.familiares'::regclass
+      ) THEN
+        ALTER TABLE familiares
+          ADD CONSTRAINT familiares_status_check
+          CHECK (status IN ('active', 'revoked'));
+      END IF;
+    END
+    $$;
+  `);
+
+  // 3) Promote the oldest familiar of each family to 'primary',
+  //    but ONLY for families that have no primary yet. Keeps the
+  //    migration idempotent on re-runs and never overrides a
+  //    manual primary chosen later.
+  await pool.query(`
+    UPDATE familiares
+    SET role = 'primary'
+    WHERE id IN (
+      SELECT DISTINCT ON (family_code) id
+      FROM familiares
+      WHERE family_code NOT IN (
+        SELECT family_code FROM familiares WHERE role = 'primary'
+      )
+      ORDER BY family_code, joined_at ASC, id ASC
+    );
+  `);
+
+  // 4) Enforce "at most 1 primary per family" at the DB level.
+  //    Partial unique index = uniqueness applies only to rows where
+  //    role='primary'. Other roles are unconstrained.
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_primary_per_family
+      ON familiares (family_code)
+      WHERE role = 'primary';
+  `);
+
   dbReady = true;
   log('[db] schema ready');
 }
