@@ -363,6 +363,64 @@ app.delete('/family/carers/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+app.post('/family/transfer-primary', async (req, res, next) => {
+  try {
+    const { from_id, to_id } = req.body;
+    if (typeof from_id !== 'string' || !from_id || typeof to_id !== 'string' || !to_id) {
+      return res.status(400).json({ error: 'from_id and to_id are required' });
+    }
+    if (from_id === to_id) {
+      return res.status(400).json({ error: 'from_id and to_id must be different' });
+    }
+    const pre = await pool.query(
+      'SELECT id, family_code, role, status FROM familiares WHERE id IN ($1, $2)',
+      [from_id, to_id]
+    );
+    if (pre.rowCount < 2) {
+      return res.status(404).json({ error: 'one or both carers not found' });
+    }
+    const from = pre.rows.find(r => r.id === from_id);
+    const to   = pre.rows.find(r => r.id === to_id);
+    if (from.family_code !== to.family_code) {
+      return res.status(400).json({ error: 'carers must belong to the same family' });
+    }
+    if (from.role !== 'primary') {
+      return res.status(400).json({ error: 'from_id is not the current primary' });
+    }
+    if (from.status !== 'active') {
+      return res.status(400).json({ error: 'from_id is not active' });
+    }
+    if (to.role !== 'secondary') {
+      return res.status(400).json({ error: 'to_id must be a secondary carer (viewers cannot be promoted directly to primary)' });
+    }
+    if (to.status !== 'active') {
+      return res.status(400).json({ error: 'to_id is not active' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const demoted = await client.query(
+        `UPDATE familiares SET role = 'secondary' WHERE id = $1
+         RETURNING id, name, role, status, joined_at AS "joined_at"`,
+        [from_id]
+      );
+      const promoted = await client.query(
+        `UPDATE familiares SET role = 'primary' WHERE id = $1
+         RETURNING id, name, role, status, joined_at AS "joined_at"`,
+        [to_id]
+      );
+      await client.query('COMMIT');
+      log('family/transfer-primary', from_id, '->', to_id);
+      res.json({ old_primary: demoted.rows[0], new_primary: promoted.rows[0] });
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
+    }
+  } catch (e) { next(e); }
+});
+
 // ===== DADOS DO IDOSO =====
 app.post('/family/update', async (req, res, next) => {
   try {
