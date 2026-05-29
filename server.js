@@ -284,6 +284,28 @@ app.get('/family/status/:code', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+app.get('/family/carers/:code', async (req, res, next) => {
+  try {
+    const code = req.params.code;
+    const fam = await pool.query('SELECT 1 FROM families WHERE code = $1', [code]);
+    if (fam.rowCount === 0) return res.status(404).json({ error: 'family not found' });
+    const r = await pool.query(
+      `SELECT id, name, role, status, joined_at AS "joined_at"
+       FROM familiares
+       WHERE family_code = $1
+       ORDER BY CASE role
+                  WHEN 'primary'   THEN 1
+                  WHEN 'secondary' THEN 2
+                  WHEN 'viewer'    THEN 3
+                  ELSE 4
+                END,
+                joined_at ASC`,
+      [code]
+    );
+    res.json({ carers: r.rows });
+  } catch (e) { next(e); }
+});
+
 // ===== DADOS DO IDOSO =====
 app.post('/family/update', async (req, res, next) => {
   try {
