@@ -336,6 +336,33 @@ app.patch('/family/carers/:id/role', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+app.delete('/family/carers/:id', async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const cur = await pool.query(
+      `SELECT id, name, role, status, joined_at AS "joined_at"
+       FROM familiares WHERE id = $1`,
+      [id]
+    );
+    if (cur.rowCount === 0) {
+      return res.status(404).json({ error: 'carer not found' });
+    }
+    if (cur.rows[0].role === 'primary') {
+      return res.status(400).json({ error: 'cannot revoke primary carer; use /family/transfer-primary first' });
+    }
+    if (cur.rows[0].status === 'revoked') {
+      return res.json({ carer: cur.rows[0] });
+    }
+    const upd = await pool.query(
+      `UPDATE familiares SET status = 'revoked' WHERE id = $1
+       RETURNING id, name, role, status, joined_at AS "joined_at"`,
+      [id]
+    );
+    log('family/carers/revoke', id);
+    res.json({ carer: upd.rows[0] });
+  } catch (e) { next(e); }
+});
+
 // ===== DADOS DO IDOSO =====
 app.post('/family/update', async (req, res, next) => {
   try {
