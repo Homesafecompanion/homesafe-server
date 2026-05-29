@@ -306,6 +306,36 @@ app.get('/family/carers/:code', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+app.patch('/family/carers/:id/role', async (req, res, next) => {
+  try {
+    const { role } = req.body;
+    if (role !== 'secondary' && role !== 'viewer') {
+      return res.status(400).json({ error: "role must be 'secondary' or 'viewer'" });
+    }
+    const id = req.params.id;
+    const cur = await pool.query(
+      'SELECT role, status FROM familiares WHERE id = $1',
+      [id]
+    );
+    if (cur.rowCount === 0) {
+      return res.status(404).json({ error: 'carer not found' });
+    }
+    if (cur.rows[0].status === 'revoked') {
+      return res.status(400).json({ error: 'cannot change role of revoked carer' });
+    }
+    if (cur.rows[0].role === 'primary') {
+      return res.status(400).json({ error: 'use /family/transfer-primary to change primary role' });
+    }
+    const upd = await pool.query(
+      `UPDATE familiares SET role = $1 WHERE id = $2
+       RETURNING id, name, role, status, joined_at AS "joined_at"`,
+      [role, id]
+    );
+    log('family/carers/role', id, role);
+    res.json({ carer: upd.rows[0] });
+  } catch (e) { next(e); }
+});
+
 // ===== DADOS DO IDOSO =====
 app.post('/family/update', async (req, res, next) => {
   try {
