@@ -146,6 +146,41 @@ async function initDb() {
       WHERE role = 'primary';
   `);
 
+  // ===== DEVICE BINDING MIGRATION =====
+  // Adds device_id to familiares so the app can bind one carer row to one
+  // device. Combined with a partial unique index, this lets us enforce
+  // "at most 1 active row per (family_code, device_id)" without breaking
+  // legacy rows that have no device_id yet. Idempotent on re-runs.
+
+  // 5) New column. NULLABLE on purpose:
+  //    - legacy rows stay NULL (no retroactive backfill)
+  //    - requests from older app builds that don't send device_id keep
+  //      working — they just insert a row with device_id = NULL
+  await pool.query(`
+    ALTER TABLE familiares
+      ADD COLUMN IF NOT EXISTS device_id TEXT;
+  `);
+
+  // 6) Enforce "at most 1 ACTIVE row per (family_code, device_id)".
+  //    Partial unique index with TWO filters, both required:
+  //
+  //    - WHERE device_id IS NOT NULL
+  //      Without this, every legacy/no-device row would be treated as a
+  //      duplicate of every other NULL row in the same family and the
+  //      index would block legitimate inserts. (In Postgres NULLs in a
+  //      unique index are technically distinct, but we still want to keep
+  //      legacy rows fully outside this constraint as a matter of intent.)
+  //
+  //    - WHERE status = 'active'
+  //      A device may have a history of revoked rows in the same family
+  //      (e.g. carer rejoined after being removed). Only the currently
+  //      active row must be unique; revoked rows are exempt.
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_device_per_family
+      ON familiares (family_code, device_id)
+      WHERE device_id IS NOT NULL AND status = 'active';
+  `);
+
   dbReady = true;
   log('[db] schema ready');
 }
