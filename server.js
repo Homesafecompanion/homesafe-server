@@ -282,18 +282,99 @@ app.post('/family/create', async (req, res, next) => {
 
 app.post('/family/join', async (req, res, next) => {
   try {
-    const { code, name } = req.body;
+    const { code, name, device_id } = req.body;
     if (!code || !name) return res.status(400).json({ error: 'Missing parameters' });
+
+    // Light sanitization. device_id counts as "valid" only if it's a
+    // non-empty string; anything else (undefined, null, '', non-string)
+    // silently falls back to the legacy no-device path so older app
+    // builds that send junk device_id are not rejected.
+    const cleanName = name.trim();
+    if (!cleanName) return res.status(400).json({ error: 'Missing parameters' });
+    const deviceId = (typeof device_id === 'string' && device_id.length > 0)
+      ? device_id
+      : null;
+
+    // 1) Family must exist.
     const fam = await pool.query('SELECT idoso FROM families WHERE code = $1', [code]);
     if (fam.rowCount === 0) return res.status(404).json({ error: 'Código inválido!' });
-    const id = uuidv4();
-    const ins = await pool.query(
-      `INSERT INTO familiares (id, family_code, name) VALUES ($1, $2, $3)
-       RETURNING id, name, joined_at AS "joinedAt"`,
-      [id, code, name]
+
+    // 2) Decide role: first carer of a family that has no active primary
+    //    becomes 'primary'; everyone else lands as 'secondary'. The
+    //    uniq_primary_per_family partial index is the final arbiter — if
+    //    two concurrent joins both compute targetRole='primary', one of
+    //    them will hit 23505. That's the contract established in PARTE 1.
+    const primaryCheck = await pool.query(
+      `SELECT 1 FROM familiares
+       WHERE family_code = $1 AND role = 'primary' AND status = 'active'
+       LIMIT 1`,
+      [code]
     );
-    log('family/join', code, name);
-    res.json({ success: true, familiar: ins.rows[0], idoso: fam.rows[0].idoso });
+    const targetRole = primaryCheck.rowCount === 0 ? 'primary' : 'secondary';
+
+    let familiar;
+    let action;
+
+    if (deviceId) {
+      // 3a) Phase A — reactivate a revoked row for the same device, if any.
+      const reactivate = await pool.query(
+        `UPDATE familiares
+         SET status = 'active', name = $1, role = $2
+         WHERE family_code = $3 AND device_id = $4 AND status = 'revoked'
+         RETURNING id, name, role, status, joined_at AS "joinedAt"`,
+        [cleanName, targetRole, code, deviceId]
+      );
+
+      if (reactivate.rowCount === 1) {
+        familiar = reactivate.rows[0];
+        action = 'reactivated';
+      } else {
+        // 3b) Phase B — no revoked row matched. INSERT, or if an active
+        //     row for the same (code, device_id) already exists, update
+        //     its name. (xmax = 0) on the returned row tells us whether
+        //     this came from a fresh INSERT or from the DO UPDATE branch.
+        const newId = uuidv4();
+        const upsert = await pool.query(
+          `INSERT INTO familiares (id, family_code, name, role, status, device_id)
+           VALUES ($1, $2, $3, $4, 'active', $5)
+           ON CONFLICT (family_code, device_id)
+             WHERE device_id IS NOT NULL AND status = 'active'
+           DO UPDATE SET name = EXCLUDED.name
+           RETURNING id, name, role, status, joined_at AS "joinedAt",
+                    (xmax = 0) AS was_inserted`,
+          [newId, code, cleanName, targetRole, deviceId]
+        );
+        const row = upsert.rows[0];
+        action = row.was_inserted ? 'created' : 'updated_active';
+        familiar = {
+          id: row.id,
+          name: row.name,
+          role: row.role,
+          status: row.status,
+          joinedAt: row.joinedAt,
+        };
+      }
+    } else {
+      // 4) Legacy path — no device_id. Same behavior as before: always
+      //    INSERT a fresh row, no dedup. Old app builds keep working.
+      const newId = uuidv4();
+      const ins = await pool.query(
+        `INSERT INTO familiares (id, family_code, name, role)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, name, role, status, joined_at AS "joinedAt"`,
+        [newId, code, cleanName, targetRole]
+      );
+      familiar = ins.rows[0];
+      action = 'created';
+    }
+
+    log('family/join', code, cleanName, action, deviceId || 'no-device');
+    res.json({
+      success: true,
+      familiar,
+      idoso: fam.rows[0].idoso,
+      action,
+    });
   } catch (e) { next(e); }
 });
 
