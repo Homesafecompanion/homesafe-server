@@ -130,9 +130,10 @@ async function initDb() {
     WHERE id IN (
       SELECT DISTINCT ON (family_code) id
       FROM familiares
-      WHERE family_code NOT IN (
-        SELECT family_code FROM familiares WHERE role = 'primary'
-      )
+      WHERE status = 'active'
+        AND family_code NOT IN (
+          SELECT family_code FROM familiares WHERE role = 'primary'
+        )
       ORDER BY family_code, joined_at ASC, id ASC
     );
   `);
