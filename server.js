@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 const http = require('http');
 const multer = require('multer');
 const { Pool } = require('pg');
+const path = require('path');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -207,6 +208,18 @@ app.get('/', async (req, res) => {
     db,
     uptime: Math.round(process.uptime()),
   });
+});
+
+
+// ===== LEGAL PAGES =====
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
+});
+app.get('/terms', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'terms.html'));
+});
+app.get('/shared.css', (req, res) => {
+  res.type('text/css').sendFile(path.join(__dirname, 'public', 'shared.css'));
 });
 
 // ===== TRADUÇÃO =====
