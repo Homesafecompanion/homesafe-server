@@ -194,8 +194,13 @@ async function familyExists(code) {
   return r.rowCount > 0;
 }
 
+// ===== LANDING PAGE =====
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // ===== HEALTHCHECK =====
-app.get('/', async (req, res) => {
+app.get('/health', async (req, res) => {
   let db = 'unknown';
   try {
     await pool.query('SELECT 1');
