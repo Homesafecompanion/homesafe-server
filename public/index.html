@@ -1,624 +1,243 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PropPredict — London Property Intelligence</title>
-<meta name="description" content="Hyperlocal property price predictions for London. Data-driven market intelligence for investors, agents and developers.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --navy:   #0A1628;
-    --blue:   #1A5EBE;
-    --gold:   #C8922A;
-    --light:  #F4F1EB;
-    --white:  #FFFFFF;
-    --gray:   #6B7280;
-    --border: rgba(10,22,40,0.12);
-  }
-
-  html { scroll-behavior: smooth; }
-
-  body {
-    font-family: 'DM Sans', sans-serif;
-    background: var(--light);
-    color: var(--navy);
-    overflow-x: hidden;
-  }
-
-  /* NAV */
-  nav {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 1.2rem 2.5rem;
-    background: rgba(244,241,235,0.92);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-  }
-  .nav-logo {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.35rem; font-weight: 700;
-    color: var(--navy); text-decoration: none;
-    letter-spacing: -0.02em;
-  }
-  .nav-logo span { color: var(--gold); }
-  .nav-links { display: flex; gap: 2rem; list-style: none; }
-  .nav-links a {
-    font-size: 0.88rem; font-weight: 500; letter-spacing: 0.04em;
-    text-transform: uppercase; color: var(--navy);
-    text-decoration: none; opacity: 0.7;
-    transition: opacity 0.2s;
-  }
-  .nav-links a:hover { opacity: 1; }
-  .nav-cta {
-    font-size: 0.85rem; font-weight: 500;
-    background: var(--navy); color: var(--white);
-    padding: 0.6rem 1.4rem; border-radius: 2px;
-    text-decoration: none; letter-spacing: 0.03em;
-    transition: background 0.2s;
-  }
-  .nav-cta:hover { background: var(--blue); }
-
-  /* HERO */
-  .hero {
-    min-height: 100vh;
-    display: grid; grid-template-columns: 1fr 1fr;
-    align-items: center;
-    padding: 7rem 2.5rem 4rem;
-    gap: 4rem;
-    max-width: 1200px; margin: 0 auto;
-  }
-  .hero-label {
-    display: inline-block;
-    font-size: 0.75rem; font-weight: 500;
-    letter-spacing: 0.15em; text-transform: uppercase;
-    color: var(--gold);
-    border: 1px solid var(--gold);
-    padding: 0.35rem 0.9rem; border-radius: 2px;
-    margin-bottom: 1.5rem;
-  }
-  .hero h1 {
-    font-family: 'Playfair Display', serif;
-    font-size: clamp(2.4rem, 4vw, 3.8rem);
-    font-weight: 700; line-height: 1.1;
-    letter-spacing: -0.03em;
-    margin-bottom: 1.5rem;
-  }
-  .hero h1 em {
-    font-style: italic; color: var(--blue);
-  }
-  .hero-desc {
-    font-size: 1.05rem; line-height: 1.7;
-    color: var(--gray); max-width: 480px;
-    margin-bottom: 2.5rem;
-  }
-  .hero-actions { display: flex; gap: 1rem; flex-wrap: wrap; }
-  .btn-primary {
-    background: var(--navy); color: var(--white);
-    padding: 0.9rem 2rem; border-radius: 2px;
-    font-size: 0.9rem; font-weight: 500;
-    text-decoration: none; letter-spacing: 0.03em;
-    transition: background 0.2s, transform 0.15s;
-    display: inline-block;
-  }
-  .btn-primary:hover { background: var(--blue); transform: translateY(-1px); }
-  .btn-secondary {
-    border: 1.5px solid var(--navy); color: var(--navy);
-    padding: 0.9rem 2rem; border-radius: 2px;
-    font-size: 0.9rem; font-weight: 500;
-    text-decoration: none; letter-spacing: 0.03em;
-    transition: all 0.2s;
-    display: inline-block;
-  }
-  .btn-secondary:hover { background: var(--navy); color: var(--white); }
-
-  /* HERO VISUAL */
-  .hero-visual {
-    position: relative;
-  }
-  .hero-card {
-    background: var(--white);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 2rem;
-    box-shadow: 0 20px 60px rgba(10,22,40,0.1);
-  }
-  .hero-card-title {
-    font-size: 0.75rem; font-weight: 500;
-    letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--gray); margin-bottom: 1.5rem;
-  }
-  .stat-row {
-    display: flex; justify-content: space-between;
-    align-items: flex-end; margin-bottom: 1.5rem;
-    padding-bottom: 1.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .stat-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-  .stat-location { font-size: 0.9rem; font-weight: 500; color: var(--navy); }
-  .stat-sub { font-size: 0.75rem; color: var(--gray); margin-top: 2px; }
-  .stat-value { text-align: right; }
-  .stat-price {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.2rem; font-weight: 600; color: var(--navy);
-  }
-  .stat-change {
-    font-size: 0.75rem; font-weight: 500;
-    color: #1a7a3a; margin-top: 2px;
-  }
-  .hero-badge {
-    position: absolute; top: -1rem; right: -1rem;
-    background: var(--gold); color: var(--white);
-    font-size: 0.75rem; font-weight: 500;
-    padding: 0.5rem 1rem; border-radius: 2px;
-    letter-spacing: 0.05em;
-  }
-
-  /* STATS BAR */
-  .stats-bar {
-    background: var(--navy);
-    padding: 2.5rem;
-  }
-  .stats-inner {
-    max-width: 1200px; margin: 0 auto;
-    display: grid; grid-template-columns: repeat(4, 1fr);
-    gap: 2rem;
-  }
-  .stat-item { text-align: center; }
-  .stat-number {
-    font-family: 'Playfair Display', serif;
-    font-size: 2.2rem; font-weight: 700;
-    color: var(--white); line-height: 1;
-    margin-bottom: 0.4rem;
-  }
-  .stat-number span { color: var(--gold); }
-  .stat-desc { font-size: 0.8rem; color: rgba(255,255,255,0.55); letter-spacing: 0.05em; text-transform: uppercase; }
-
-  /* HOW IT WORKS */
-  .section {
-    padding: 6rem 2.5rem;
-    max-width: 1200px; margin: 0 auto;
-  }
-  .section-label {
-    font-size: 0.75rem; font-weight: 500;
-    letter-spacing: 0.15em; text-transform: uppercase;
-    color: var(--gold); margin-bottom: 1rem;
-  }
-  .section-title {
-    font-family: 'Playfair Display', serif;
-    font-size: clamp(1.8rem, 3vw, 2.8rem);
-    font-weight: 700; line-height: 1.15;
-    letter-spacing: -0.02em;
-    margin-bottom: 1rem;
-  }
-  .section-sub {
-    font-size: 1rem; line-height: 1.7;
-    color: var(--gray); max-width: 520px;
-    margin-bottom: 3.5rem;
-  }
-
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; }
-  .step {
-    padding: 2rem;
-    background: var(--white);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    position: relative;
-    transition: box-shadow 0.2s, transform 0.2s;
-  }
-  .step:hover { box-shadow: 0 12px 40px rgba(10,22,40,0.1); transform: translateY(-2px); }
-  .step-num {
-    font-family: 'Playfair Display', serif;
-    font-size: 3rem; font-weight: 700;
-    color: var(--gold); opacity: 0.3;
-    line-height: 1; margin-bottom: 1rem;
-  }
-  .step h3 {
-    font-size: 1.05rem; font-weight: 500;
-    margin-bottom: 0.75rem; color: var(--navy);
-  }
-  .step p { font-size: 0.9rem; line-height: 1.65; color: var(--gray); }
-
-  /* HOTSPOTS */
-  .hotspots-section {
-    background: var(--navy);
-    padding: 6rem 2.5rem;
-  }
-  .hotspots-inner { max-width: 1200px; margin: 0 auto; }
-  .hotspots-inner .section-label { color: var(--gold); }
-  .hotspots-inner .section-title { color: var(--white); }
-  .hotspots-inner .section-sub { color: rgba(255,255,255,0.55); }
-
-  .hotspots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
-  .hotspot {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 4px; padding: 1.5rem;
-    transition: background 0.2s;
-  }
-  .hotspot:hover { background: rgba(255,255,255,0.09); }
-  .hotspot-name { font-size: 0.9rem; font-weight: 500; color: var(--white); margin-bottom: 0.4rem; }
-  .hotspot-postcode { font-size: 0.75rem; color: var(--gold); letter-spacing: 0.08em; margin-bottom: 1rem; }
-  .hotspot-range {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.1rem; font-weight: 600; color: var(--white);
-    margin-bottom: 0.4rem;
-  }
-  .hotspot-tag {
-    display: inline-block;
-    font-size: 0.7rem; font-weight: 500;
-    letter-spacing: 0.08em; text-transform: uppercase;
-    padding: 0.25rem 0.7rem; border-radius: 2px;
-    background: rgba(200,146,42,0.2); color: var(--gold);
-    margin-top: 0.75rem;
-  }
-
-  /* PRICING */
-  .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
-  .pricing-card {
-    background: var(--white);
-    border: 1px solid var(--border);
-    border-radius: 4px; padding: 2rem;
-    transition: box-shadow 0.2s, transform 0.2s;
-    position: relative;
-  }
-  .pricing-card:hover { box-shadow: 0 12px 40px rgba(10,22,40,0.1); transform: translateY(-2px); }
-  .pricing-card.featured {
-    border-color: var(--blue);
-    border-width: 2px;
-  }
-  .pricing-badge {
-    position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-    background: var(--blue); color: var(--white);
-    font-size: 0.7rem; font-weight: 500; letter-spacing: 0.08em;
-    text-transform: uppercase; padding: 0.3rem 1rem; border-radius: 2px;
-  }
-  .pricing-tier { font-size: 0.75rem; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); margin-bottom: 0.75rem; }
-  .pricing-price {
-    font-family: 'Playfair Display', serif;
-    font-size: 2.2rem; font-weight: 700; color: var(--navy);
-    margin-bottom: 0.25rem;
-  }
-  .pricing-price sub { font-size: 1rem; font-family: 'DM Sans', sans-serif; font-weight: 400; }
-  .pricing-period { font-size: 0.8rem; color: var(--gray); margin-bottom: 1.5rem; }
-  .pricing-features { list-style: none; margin-bottom: 2rem; }
-  .pricing-features li {
-    font-size: 0.88rem; color: var(--navy);
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 0.6rem;
-  }
-  .pricing-features li::before { content: "—"; color: var(--gold); font-weight: 700; }
-  .btn-pricing {
-    display: block; text-align: center;
-    padding: 0.85rem; border-radius: 2px;
-    font-size: 0.88rem; font-weight: 500;
-    text-decoration: none; letter-spacing: 0.03em;
-    transition: all 0.2s;
-  }
-  .btn-pricing-outline {
-    border: 1.5px solid var(--navy); color: var(--navy);
-  }
-  .btn-pricing-outline:hover { background: var(--navy); color: var(--white); }
-  .btn-pricing-fill {
-    background: var(--blue); color: var(--white);
-  }
-  .btn-pricing-fill:hover { background: var(--navy); }
-
-  /* CTA SECTION */
-  .cta-section {
-    background: var(--gold);
-    padding: 5rem 2.5rem;
-    text-align: center;
-  }
-  .cta-section h2 {
-    font-family: 'Playfair Display', serif;
-    font-size: clamp(1.8rem, 3vw, 2.8rem);
-    font-weight: 700; color: var(--white);
-    margin-bottom: 1rem;
-  }
-  .cta-section p { font-size: 1rem; color: rgba(255,255,255,0.8); margin-bottom: 2rem; }
-  .btn-cta {
-    background: var(--white); color: var(--navy);
-    padding: 1rem 2.5rem; border-radius: 2px;
-    font-size: 0.95rem; font-weight: 500;
-    text-decoration: none; letter-spacing: 0.03em;
-    display: inline-block;
-    transition: transform 0.15s;
-  }
-  .btn-cta:hover { transform: translateY(-2px); }
-
-  /* FOOTER */
-  footer {
-    background: var(--navy);
-    padding: 3rem 2.5rem;
-  }
-  .footer-inner {
-    max-width: 1200px; margin: 0 auto;
-    display: flex; justify-content: space-between; align-items: center;
-    flex-wrap: wrap; gap: 1.5rem;
-  }
-  .footer-logo {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.2rem; font-weight: 700;
-    color: var(--white); text-decoration: none;
-  }
-  .footer-logo span { color: var(--gold); }
-  .footer-links { display: flex; gap: 2rem; list-style: none; }
-  .footer-links a { font-size: 0.82rem; color: rgba(255,255,255,0.45); text-decoration: none; transition: color 0.2s; }
-  .footer-links a:hover { color: var(--white); }
-  .footer-copy { font-size: 0.78rem; color: rgba(255,255,255,0.3); }
-
-  /* FADE IN */
-  .fade-in {
-    opacity: 0; transform: translateY(24px);
-    animation: fadeUp 0.7s ease forwards;
-  }
-  @keyframes fadeUp {
-    to { opacity: 1; transform: translateY(0); }
-  }
-  .delay-1 { animation-delay: 0.1s; }
-  .delay-2 { animation-delay: 0.2s; }
-  .delay-3 { animation-delay: 0.35s; }
-  .delay-4 { animation-delay: 0.5s; }
-
-  /* RESPONSIVE */
-  @media (max-width: 768px) {
-    .hero { grid-template-columns: 1fr; padding-top: 6rem; }
-    .hero-visual { display: none; }
-    .stats-inner { grid-template-columns: repeat(2, 1fr); }
-    .steps, .hotspots-grid, .pricing-grid { grid-template-columns: 1fr; }
-    nav { padding: 1rem 1.5rem; }
-    .nav-links { display: none; }
-    .section { padding: 4rem 1.5rem; }
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HomeSafe — Peace of mind for families caring at a distance</title>
+  <meta name="description" content="HomeSafe helps UK families stay connected with elderly loved ones. Two apps working together: HomeSafe UK for seniors and HomeSafe Carer for family members." />
+  <link rel="stylesheet" href="/shared.css" />
+  <style>
+    .hero {
+      padding: 4rem 1.5rem 3rem;
+      text-align: center;
+      background: linear-gradient(180deg, #f7f5fb 0%, #ffffff 100%);
+    }
+    .hero h1 {
+      font-size: 2.5rem;
+      line-height: 1.15;
+      margin: 0 0 1rem;
+      color: #1f1235;
+    }
+    .hero .lead {
+      font-size: 1.2rem;
+      color: #4a3e60;
+      max-width: 640px;
+      margin: 0 auto 1.5rem;
+      line-height: 1.5;
+    }
+    .hero .badge {
+      display: inline-block;
+      background: #6B46C1;
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-top: 1rem;
+    }
+    .section {
+      padding: 3rem 1.5rem;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    .section h2 {
+      font-size: 1.75rem;
+      color: #1f1235;
+      margin: 0 0 1.5rem;
+    }
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.5rem;
+    }
+    .step {
+      background: #f7f5fb;
+      padding: 1.5rem;
+      border-radius: 12px;
+    }
+    .step .num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.25rem;
+      height: 2.25rem;
+      background: #6B46C1;
+      color: white;
+      border-radius: 999px;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+    .step h3 {
+      margin: 0 0 0.5rem;
+      font-size: 1.1rem;
+      color: #1f1235;
+    }
+    .step p {
+      margin: 0;
+      color: #4a3e60;
+      line-height: 1.5;
+    }
+    .audience {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 2rem;
+    }
+    .audience-card {
+      border: 1px solid #e5dff1;
+      padding: 1.5rem;
+      border-radius: 12px;
+    }
+    .audience-card h3 {
+      color: #6B46C1;
+      margin: 0 0 0.75rem;
+    }
+    .audience-card p {
+      color: #4a3e60;
+      line-height: 1.6;
+      margin: 0 0 0.75rem;
+    }
+    .features {
+      list-style: none;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+    }
+    .features li {
+      padding: 1rem 1.25rem;
+      background: #f7f5fb;
+      border-radius: 10px;
+      color: #1f1235;
+      font-weight: 500;
+    }
+    .features li strong { display: block; margin-bottom: 0.25rem; color: #6B46C1; }
+    .contact {
+      background: #1f1235;
+      color: white;
+      padding: 3rem 1.5rem;
+      text-align: center;
+    }
+    .contact h2 { color: white; }
+    .contact p { color: #d6ccf0; max-width: 560px; margin: 0.5rem auto 1rem; }
+    .contact a { color: white; font-weight: 600; }
+    .site-footer {
+      padding: 1.5rem;
+      text-align: center;
+      font-size: 0.9rem;
+      color: #6b5b8a;
+    }
+    .site-footer a { color: #6B46C1; margin: 0 0.5rem; }
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 2rem; }
+    }
+  </style>
 </head>
 <body>
+  <header class="site-header">
+    <a href="/" class="brand">HomeSafe</a>
+    <nav>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/support">Support</a>
+    </nav>
+  </header>
 
-<!-- NAV -->
-<nav>
-  <a href="#" class="nav-logo">Prop<span>Predict</span></a>
-  <ul class="nav-links">
-    <li><a href="#how">How it works</a></li>
-    <li><a href="#markets">Markets</a></li>
-    <li><a href="#pricing">Pricing</a></li>
-  </ul>
-  <a href="mailto:hello@proppredict.co.uk" class="nav-cta">Get a Report</a>
-</nav>
+  <section class="hero">
+    <h1>Peace of mind for families caring at a distance</h1>
+    <p class="lead">
+      HomeSafe helps UK families stay close to elderly loved ones without
+      hovering. Two apps that work together: one for the person being
+      cared for, one for the family members looking out for them.
+    </p>
+    <span class="badge">Coming soon to the App Store</span>
+  </section>
 
-<!-- HERO -->
-<section style="background: var(--light);">
-  <div class="hero">
-    <div>
-      <div class="hero-label fade-in">London Property Intelligence</div>
-      <h1 class="fade-in delay-1">
-        Know where<br>
-        <em>London property</em><br>
-        is heading next.
-      </h1>
-      <p class="hero-desc fade-in delay-2">
-        PropPredict delivers hyperlocal price forecasts for London's most active property markets — street by street, backed by Land Registry data and predictive modelling.
-      </p>
-      <div class="hero-actions fade-in delay-3">
-        <a href="mailto:hello@proppredict.co.uk" class="btn-primary">Request a Report</a>
-        <a href="#how" class="btn-secondary">See How It Works</a>
+  <section class="section">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <span class="num">1</span>
+        <h3>Your loved one installs HomeSafe UK</h3>
+        <p>
+          The elderly relative uses HomeSafe UK on their own phone.
+          It records medical details, doctor information, and daily
+          check-ins in a simple, calm interface.
+        </p>
+      </div>
+      <div class="step">
+        <span class="num">2</span>
+        <h3>They share an 8-digit family code</h3>
+        <p>
+          One code, one family. Everyone who needs to help — spouse,
+          children, grandchildren — joins using the same code from
+          HomeSafe Carer on their own device.
+        </p>
+      </div>
+      <div class="step">
+        <span class="num">3</span>
+        <h3>You stay informed, quietly</h3>
+        <p>
+          The Carer app shows their status, medical information, address,
+          and doctor at a glance. Call, message, or open WhatsApp with
+          one tap. No dashboards to check, no reports to read.
+        </p>
       </div>
     </div>
-    <div class="hero-visual fade-in delay-4">
-      <div style="position: relative;">
-        <div class="hero-badge">Live Data · E1</div>
-        <div class="hero-card">
-          <p class="hero-card-title">E1 Market Snapshot · March 2026</p>
-          <div class="stat-row">
-            <div>
-              <div class="stat-location">Avantgarde Tower</div>
-              <div class="stat-sub">E1 6GR · Shoreditch</div>
-            </div>
-            <div class="stat-value">
-              <div class="stat-price">£720K avg</div>
-              <div class="stat-change">↑ +6.0% projected</div>
-            </div>
-          </div>
-          <div class="stat-row">
-            <div>
-              <div class="stat-location">Stepney City Apts</div>
-              <div class="stat-sub">E1 3HS · Stepney</div>
-            </div>
-            <div class="stat-value">
-              <div class="stat-price">£590K avg</div>
-              <div class="stat-change">↑ +6.0% projected</div>
-            </div>
-          </div>
-          <div class="stat-row">
-            <div>
-              <div class="stat-location">Altitude Point</div>
-              <div class="stat-sub">E1 8NF · Aldgate</div>
-            </div>
-            <div class="stat-value">
-              <div class="stat-price">£685K avg</div>
-              <div class="stat-change">↑ +5.0% projected</div>
-            </div>
-          </div>
-          <div class="stat-row">
-            <div>
-              <div class="stat-location">Candle Street</div>
-              <div class="stat-sub">E1 4RP · Mile End</div>
-            </div>
-            <div class="stat-value">
-              <div class="stat-price">£385K avg</div>
-              <div class="stat-change">↑ +4.0% projected</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
+  </section>
 
-<!-- STATS BAR -->
-<div class="stats-bar">
-  <div class="stats-inner">
-    <div class="stat-item">
-      <div class="stat-number">1,658<span>+</span></div>
-      <div class="stat-desc">Transactions analysed</div>
+  <section class="section">
+    <h2>Who HomeSafe is for</h2>
+    <div class="audience">
+      <div class="audience-card">
+        <h3>The person being cared for</h3>
+        <p>
+          Older adults who live independently but want their family to
+          have the essentials — who to call in an emergency, what
+          medications they take, which doctor they see — without needing
+          to be asked every week.
+        </p>
+      </div>
+      <div class="audience-card">
+        <h3>The family looking out for them</h3>
+        <p>
+          Adult children, siblings, or partners — often in a different
+          city or country — who want to know the important things are
+          under control and be one tap away when something changes.
+        </p>
+      </div>
     </div>
-    <div class="stat-item">
-      <div class="stat-number">E1<span>/</span>E2</div>
-      <div class="stat-desc">Focus postcodes</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-number">6<span>+</span></div>
-      <div class="stat-desc">Hotspot micro-markets</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-number">12<span>mo</span></div>
-      <div class="stat-desc">Price projections</div>
-    </div>
-  </div>
-</div>
+  </section>
 
-<!-- HOW IT WORKS -->
-<section class="section" id="how">
-  <p class="section-label">The process</p>
-  <h2 class="section-title">Data-driven predictions,<br>not guesswork.</h2>
-  <p class="section-sub">Every PropPredict report is built on verified Land Registry transactions, local planning data, and micro-market trend analysis.</p>
-  <div class="steps">
-    <div class="step">
-      <div class="step-num">01</div>
-      <h3>Land Registry Data</h3>
-      <p>We analyse every verified sale in your target area — prices, dates, property types, and transaction volume going back three years.</p>
-    </div>
-    <div class="step">
-      <div class="step-num">02</div>
-      <h3>Micro-Market Modelling</h3>
-      <p>Our models identify price momentum, demand patterns, and comparable micro-markets at street level — not just postcode averages.</p>
-    </div>
-    <div class="step">
-      <div class="step-num">03</div>
-      <h3>12-Month Projections</h3>
-      <p>You receive a clear, professional report with current benchmarks, price forecasts, and market insights ready to act on.</p>
-    </div>
-  </div>
-</section>
-
-<!-- HOTSPOTS -->
-<div class="hotspots-section" id="markets">
-  <div class="hotspots-inner">
-    <p class="section-label">Active markets</p>
-    <h2 class="section-title">Shoreditch & East London<br>hotspots we track.</h2>
-    <p class="section-sub">High-volume micro-markets with sufficient transaction data for reliable 12-month price projections.</p>
-    <div class="hotspots-grid">
-      <div class="hotspot">
-        <div class="hotspot-name">Avantgarde Tower & Place</div>
-        <div class="hotspot-postcode">E1 6GR / E1 6GS</div>
-        <div class="hotspot-range">£382K – £2.1M</div>
-        <div class="hotspot-tag">Premium demand</div>
-      </div>
-      <div class="hotspot">
-        <div class="hotspot-name">Altitude Point, Alie Street</div>
-        <div class="hotspot-postcode">E1 8NF / E1 8NG</div>
-        <div class="hotspot-range">£515K – £2.5M</div>
-        <div class="hotspot-tag">Luxury tower</div>
-      </div>
-      <div class="hotspot">
-        <div class="hotspot-name">Bouchon Point, Cendal Crescent</div>
-        <div class="hotspot-postcode">E1 2FT / E1 2FU</div>
-        <div class="hotspot-range">£437K – £818K</div>
-        <div class="hotspot-tag">New build surge</div>
-      </div>
-      <div class="hotspot">
-        <div class="hotspot-name">Stepney City Apartments</div>
-        <div class="hotspot-postcode">E1 3HS · Clark Street</div>
-        <div class="hotspot-range">£380K – £952K</div>
-        <div class="hotspot-tag">Consistent growth</div>
-      </div>
-      <div class="hotspot">
-        <div class="hotspot-name">Candle Street</div>
-        <div class="hotspot-postcode">E1 4RP – E1 4SF</div>
-        <div class="hotspot-range">£93K – £550K</div>
-        <div class="hotspot-tag">High turnover</div>
-      </div>
-      <div class="hotspot">
-        <div class="hotspot-name">Wiverton Tower</div>
-        <div class="hotspot-postcode">E1 7AS · New Drum Street</div>
-        <div class="hotspot-range">£525K – £2M</div>
-        <div class="hotspot-tag">Landmark tower</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- PRICING -->
-<section class="section" id="pricing">
-  <p class="section-label">Pricing</p>
-  <h2 class="section-title">Clear reports,<br>straightforward pricing.</h2>
-  <p class="section-sub">No subscriptions to start. Pay per report, or choose a monthly plan as your needs grow.</p>
-  <div class="pricing-grid">
-    <div class="pricing-card">
-      <p class="pricing-tier">Snapshot</p>
-      <p class="pricing-price"><sub>£</sub>49</p>
-      <p class="pricing-period">per report</p>
-      <ul class="pricing-features">
-        <li>Single street or development</li>
-        <li>Current price benchmarks</li>
-        <li>3-month price trend</li>
-        <li>PDF report delivered in 48h</li>
-      </ul>
-      <a href="mailto:hello@proppredict.co.uk?subject=Snapshot Report" class="btn-pricing btn-pricing-outline">Get Started</a>
-    </div>
-    <div class="pricing-card featured">
-      <div class="pricing-badge">Most Popular</div>
-      <p class="pricing-tier">Intelligence</p>
-      <p class="pricing-price"><sub>£</sub>149</p>
-      <p class="pricing-period">per report</p>
-      <ul class="pricing-features">
-        <li>Full micro-market analysis</li>
-        <li>12-month price projections</li>
-        <li>Comparable transactions</li>
-        <li>Investment signal rating</li>
-        <li>PDF + data export</li>
-      </ul>
-      <a href="mailto:hello@proppredict.co.uk?subject=Intelligence Report" class="btn-pricing btn-pricing-fill">Get Started</a>
-    </div>
-    <div class="pricing-card">
-      <p class="pricing-tier">Monthly</p>
-      <p class="pricing-price"><sub>£</sub>299</p>
-      <p class="pricing-period">per month</p>
-      <ul class="pricing-features">
-        <li>3 Intelligence reports/month</li>
-        <li>Priority turnaround (24h)</li>
-        <li>Market alerts for your areas</li>
-        <li>Dedicated account access</li>
-      </ul>
-      <a href="mailto:hello@proppredict.co.uk?subject=Monthly Plan" class="btn-pricing btn-pricing-outline">Get Started</a>
-    </div>
-  </div>
-</section>
-
-<!-- CTA -->
-<div class="cta-section">
-  <h2>Ready to predict your next move?</h2>
-  <p>Get your first Shoreditch market report within 48 hours.</p>
-  <a href="mailto:hello@proppredict.co.uk" class="btn-cta">Email us — hello@proppredict.co.uk</a>
-</div>
-
-<!-- FOOTER -->
-<footer>
-  <div class="footer-inner">
-    <a href="#" class="footer-logo">Prop<span>Predict</span></a>
-    <ul class="footer-links">
-      <li><a href="#how">How it works</a></li>
-      <li><a href="#markets">Markets</a></li>
-      <li><a href="#pricing">Pricing</a></li>
-      <li><a href="mailto:hello@proppredict.co.uk">Contact</a></li>
+  <section class="section">
+    <h2>What's inside</h2>
+    <ul class="features">
+      <li><strong>Multi-carer</strong>Several family members can share the same family without stepping on each other.</li>
+      <li><strong>7 languages</strong>English, Portuguese, Spanish, French, Italian, Polish, and Romanian.</li>
+      <li><strong>Real information</strong>Status, blood type, allergies, conditions, medications, address, and doctor — all in one glance.</li>
+      <li><strong>Private by default</strong>UK-hosted infrastructure, GDPR-compliant, no ads, no data sold to third parties.</li>
+      <li><strong>Simple for seniors</strong>Big, calm screens on the HomeSafe UK side, designed for people who don't want another complicated app.</li>
+      <li><strong>Built in the UK</strong>Made by a UK sole trader with lived experience of caring for family from a distance.</li>
     </ul>
-    <p class="footer-copy">© 2026 PropPredict Ltd · Registered in England & Wales</p>
-  </div>
-</footer>
+  </section>
 
+  <section class="contact">
+    <h2>Get in touch</h2>
+    <p>
+      Questions, feedback, or want to be notified when we launch on the
+      App Store? Write to us — every email is read by a person.
+    </p>
+    <p>
+      <a href="mailto:hello@homesafecompanion.co.uk">hello@homesafecompanion.co.uk</a>
+    </p>
+  </section>
+
+  <footer class="site-footer">
+    <p>
+      HomeSafe Companion Ltd &middot; United Kingdom
+      &middot; <a href="/privacy">Privacy</a>
+      &middot; <a href="/terms">Terms</a>
+      &middot; <a href="/support">Support</a>
+    </p>
+  </footer>
 </body>
 </html>
