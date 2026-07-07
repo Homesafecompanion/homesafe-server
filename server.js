@@ -67,6 +67,15 @@ async function initDb() {
       ts           TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_sos_events_code_ts ON sos_events(family_code, ts DESC);
+    CREATE TABLE IF NOT EXISTS push_tokens (
+      id           UUID PRIMARY KEY,
+      family_code  CHAR(8) NOT NULL REFERENCES families(code) ON DELETE CASCADE,
+      device_id    TEXT NOT NULL,
+      expo_token   TEXT NOT NULL,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT   uq_push_token_device UNIQUE (family_code, device_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_tokens_family ON push_tokens(family_code);
   `);
 
   // ===== MULTI-CARER MIGRATION =====
@@ -192,6 +201,22 @@ const newCode = () => Math.floor(10000000 + Math.random() * 90000000).toString()
 async function familyExists(code) {
   const r = await pool.query('SELECT 1 FROM families WHERE code = $1', [code]);
   return r.rowCount > 0;
+}
+
+async function sendExpoPushNotifications(tokens, title, body, data) {
+  if (!tokens.length) return;
+  const messages = tokens.map((to) => ({ to, title, body, data, sound: 'default', priority: 'high' }));
+  try {
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(messages),
+    });
+    const result = await res.json();
+    log('[push] enviado', messages.length, 'tokens — status:', result?.data?.[0]?.status ?? 'unknown');
+  } catch (e) {
+    console.error('[push] erro ao enviar notificações:', e.message);
+  }
 }
 
 // ===== LANDING PAGE =====
@@ -644,6 +669,19 @@ app.post('/family/sos', async (req, res, next) => {
       [JSON.stringify(lastSOS), code]
     );
     log('family/sos', code, type);
+    const tkRows = await pool.query(
+      'SELECT expo_token FROM push_tokens WHERE family_code = $1',
+      [code]
+    );
+    if (tkRows.rows.length > 0) {
+      const tokens = tkRows.rows.map((r) => r.expo_token);
+      sendExpoPushNotifications(
+        tokens,
+        '🚨 SOS Activado',
+        'O seu familiar ativou um alerta de emergência.',
+        { type: 'sos', code, sosType: type ?? null }
+      );
+    }
     res.json({ success: true });
   } catch (e) { next(e); }
 });
@@ -659,6 +697,26 @@ app.get('/family/sos/:code', async (req, res, next) => {
       [code]
     );
     res.json(r.rows);
+  } catch (e) { next(e); }
+});
+
+// ===== PUSH TOKENS =====
+app.post('/carer/register-push-token', async (req, res, next) => {
+  try {
+    const { code, device_id, expoPushToken } = req.body;
+    if (!code || !device_id || !expoPushToken)
+      return res.status(400).json({ error: 'Missing code, device_id ou expoPushToken' });
+    if (!(await familyExists(code)))
+      return res.status(404).json({ error: 'Código inválido' });
+    await pool.query(
+      `INSERT INTO push_tokens (id, family_code, device_id, expo_token)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (family_code, device_id)
+       DO UPDATE SET expo_token = EXCLUDED.expo_token`,
+      [uuidv4(), code, device_id, expoPushToken]
+    );
+    log('carer/register-push-token', code, device_id);
+    res.json({ success: true });
   } catch (e) { next(e); }
 });
 
