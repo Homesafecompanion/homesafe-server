@@ -14,7 +14,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
