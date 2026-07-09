@@ -9,6 +9,8 @@ const http = require('http');
 const multer = require('multer');
 const { Pool } = require('pg');
 const path = require('path');
+const { Resend } = require('resend');
+const cron = require('node-cron');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -76,6 +78,14 @@ async function initDb() {
       CONSTRAINT   uq_push_token_device UNIQUE (family_code, device_id)
     );
     CREATE INDEX IF NOT EXISTS idx_push_tokens_family ON push_tokens(family_code);
+    CREATE TABLE IF NOT EXISTS carer_emails (
+      id           UUID PRIMARY KEY,
+      family_code  CHAR(8) NOT NULL REFERENCES families(code) ON DELETE CASCADE,
+      email        TEXT NOT NULL,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT   uq_carer_email UNIQUE (family_code, email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_carer_emails_family ON carer_emails(family_code);
   `);
 
   // ===== MULTI-CARER MIGRATION =====
@@ -720,6 +730,60 @@ app.post('/carer/register-push-token', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===== EMAIL SEMANAL =====
+app.post('/carer/register-email', async (req, res, next) => {
+  try {
+    const { code, email } = req.body;
+    if (!code || !email || typeof email !== 'string' || !email.includes('@'))
+      return res.status(400).json({ error: 'Missing or invalid code/email' });
+    if (!(await familyExists(code)))
+      return res.status(404).json({ error: 'Código inválido' });
+    await pool.query(
+      `INSERT INTO carer_emails (id, family_code, email)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (family_code, email) DO NOTHING`,
+      [uuidv4(), code, email.trim().toLowerCase()]
+    );
+    log('carer/register-email', code, email);
+    res.json({ success: true });
+  } catch (e) { next(e); }
+});
+
+app.delete('/carer/register-email', async (req, res, next) => {
+  try {
+    const { code, email } = req.query;
+    if (!code || !email)
+      return res.status(400).json({ error: 'Missing code/email' });
+    await pool.query(
+      'DELETE FROM carer_emails WHERE family_code = $1 AND email = $2',
+      [code, decodeURIComponent(email).toLowerCase()]
+    );
+    log('carer/unregister-email', code, email);
+    res.json({ success: true });
+  } catch (e) { next(e); }
+});
+
+app.get('/carer/unsubscribe', async (req, res, next) => {
+  try {
+    const { code, email } = req.query;
+    if (!code || !email)
+      return res.status(400).send('Invalid unsubscribe link.');
+    await pool.query(
+      'DELETE FROM carer_emails WHERE family_code = $1 AND email = $2',
+      [code, decodeURIComponent(email).toLowerCase()]
+    );
+    res.send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><title>Unsubscribed — HomeSafe</title></head>
+<body style="margin:0;padding:40px 24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#F5F5F7;text-align:center;">
+<div style="max-width:400px;margin:0 auto;background:#fff;border-radius:16px;padding:40px;box-shadow:0 4px 16px rgba(0,0,0,0.08);">
+<p style="font-size:48px;margin:0 0 16px;">✓</p>
+<h1 style="color:#111827;font-size:22px;margin:0 0 12px;">Unsubscribed</h1>
+<p style="color:#6B7280;font-size:15px;margin:0;line-height:1.6;">You won't receive HomeSafe weekly updates anymore.<br/>You can re-subscribe anytime in the app under Settings.</p>
+</div>
+</body></html>`);
+  } catch (e) { next(e); }
+});
+
 // ===== TTS =====
 app.post('/speak', async (req, res) => {
   const { text } = req.body;
@@ -739,6 +803,194 @@ app.post('/speak', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// ===== WEEKLY EMAIL DIGEST =====
+function buildWeeklyEmailHtml({ name, medsDone, medsTotal, sosCalls, lastSeenLabel, unsubscribeUrl }) {
+  const medsLine = medsTotal > 0
+    ? `${medsDone} of ${medsTotal} taken today`
+    : 'No medications recorded';
+  const sosOk = sosCalls === 0;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>HomeSafe Weekly Update</title>
+</head>
+<body style="margin:0;padding:0;background:#F5F5F7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F5F7;padding:32px 16px;">
+<tr><td align="center">
+<table width="100%" style="max-width:520px;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <tr>
+    <td style="background:#6B46C1;padding:32px;text-align:center;">
+      <p style="margin:0 0 6px;color:rgba(255,255,255,0.7);font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:600;">HomeSafe Carer</p>
+      <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px;">Weekly Update</h1>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:28px 32px 12px;">
+      <p style="margin:0;font-size:16px;color:#374151;line-height:1.6;">
+        Hi there &#128075;<br/>
+        Here&#8217;s how <strong style="color:#111827;">${name}</strong> has been doing this week.
+      </p>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:4px 32px 8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#F9F7FF;border-radius:14px;margin-bottom:12px;">
+        <tr><td style="padding:20px 24px;">
+          <p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6B46C1;">&#128138; Medications today</p>
+          <p style="margin:0;font-size:22px;font-weight:700;color:#111827;">${medsLine}</p>
+        </td></tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="48%" style="background:${sosOk ? '#F0FDF4' : '#FEF3C7'};border-radius:14px;padding:20px;vertical-align:top;">
+            <p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${sosOk ? '#059669' : '#B45309'};">&#128680; SOS Alerts</p>
+            <p style="margin:0;font-size:30px;font-weight:800;color:${sosOk ? '#059669' : '#B45309'};">${sosCalls}</p>
+            <p style="margin:4px 0 0;font-size:11px;color:#6B7280;">past 7 days</p>
+          </td>
+          <td width="4%"></td>
+          <td width="48%" style="background:#F9F7FF;border-radius:14px;padding:20px;vertical-align:top;">
+            <p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6B46C1;">&#128241; Last Active</p>
+            <p style="margin:0;font-size:15px;font-weight:700;color:#111827;">${lastSeenLabel}</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="padding:20px 32px 32px;text-align:center;">
+      <a href="https://homesafecompanion.co.uk"
+         style="display:inline-block;background:#6B46C1;color:#ffffff;font-size:16px;font-weight:700;padding:14px 36px;border-radius:12px;text-decoration:none;">
+        Open HomeSafe &#8594;
+      </a>
+    </td>
+  </tr>
+
+  <tr>
+    <td style="background:#F9F7FF;padding:20px 32px;text-align:center;border-top:1px solid #EDE7F6;">
+      <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.8;">
+        You&#8217;re receiving this because you subscribed to weekly updates in HomeSafe Carer.<br/>
+        <a href="${unsubscribeUrl}" style="color:#6B46C1;text-decoration:underline;">Unsubscribe</a>
+      </p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+function buildWeeklyEmailText({ name, medsDone, medsTotal, sosCalls, lastSeenLabel, unsubscribeUrl }) {
+  const medsLine = medsTotal > 0 ? `${medsDone} of ${medsTotal} taken today` : 'No medications recorded';
+  return [
+    'HomeSafe Carer — Weekly Update',
+    '',
+    `Here's how ${name} has been doing this week.`,
+    '',
+    `💊 Medications today: ${medsLine}`,
+    `🚨 SOS Alerts (past 7 days): ${sosCalls}`,
+    `📱 Last Active: ${lastSeenLabel}`,
+    '',
+    'Open HomeSafe: https://homesafecompanion.co.uk',
+    '',
+    `To unsubscribe: ${unsubscribeUrl}`,
+  ].join('\n');
+}
+
+async function sendWeeklyEmails() {
+  if (!process.env.RESEND_API_KEY) {
+    log('[weekly] RESEND_API_KEY not set — skipping');
+    return;
+  }
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const FROM = 'HomeSafe <hello@homesafecompanion.co.uk>';
+  const BASE_URL = process.env.SERVER_URL || 'https://homesafe-server.onrender.com';
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  let rows;
+  try {
+    const r = await pool.query(`
+      SELECT ce.email, ce.family_code,
+             f.idoso->>'name'                AS name,
+             f.updated_at                    AS updated_at,
+             f.dados->'profile'->'medsToday' AS meds_today
+      FROM carer_emails ce
+      JOIN families f ON f.code = ce.family_code
+    `);
+    rows = r.rows;
+  } catch (e) {
+    log('[weekly] DB query error:', e.message);
+    return;
+  }
+
+  log(`[weekly] sending to ${rows.length} subscriber(s)`);
+
+  for (const row of rows) {
+    try {
+      const sosR = await pool.query(
+        `SELECT COUNT(*)::int AS cnt FROM sos_events WHERE family_code = $1 AND ts >= $2`,
+        [row.family_code, sevenDaysAgo]
+      );
+      const sosCalls = sosR.rows[0]?.cnt ?? 0;
+
+      // Count meds taken within the 7-day window from today's snapshot
+      const mt = row.meds_today ?? {};
+      const list = Array.isArray(mt.list) ? mt.list : [];
+      const medsDone = list.length > 0
+        ? list.filter(m => {
+            if (!m.done) return false;
+            if (!m.takenAt) return true;
+            return new Date(m.takenAt) >= new Date(sevenDaysAgo);
+          }).length
+        : (mt.taken ?? 0);
+      const medsTotal = list.length > 0 ? list.length : (mt.total ?? 0);
+
+      const lastSeenLabel = row.updated_at
+        ? new Date(row.updated_at).toLocaleDateString('en-GB', {
+            weekday: 'long', day: 'numeric', month: 'long',
+          })
+        : 'Unknown';
+
+      const name = row.name || 'your loved one';
+      const unsubscribeUrl = `${BASE_URL}/carer/unsubscribe?code=${row.family_code}&email=${encodeURIComponent(row.email)}`;
+
+      const params = { name, medsDone, medsTotal, sosCalls, lastSeenLabel, unsubscribeUrl };
+
+      const { error } = await resend.emails.send({
+        from: FROM,
+        to: row.email,
+        subject: `HomeSafe weekly update — ${name}`,
+        html: buildWeeklyEmailHtml(params),
+        text: buildWeeklyEmailText(params),
+      });
+
+      if (error) {
+        log(`[weekly] ✗ failed for ${row.email}:`, error.message);
+      } else {
+        log(`[weekly] ✓ sent to ${row.email}`);
+      }
+    } catch (e) {
+      log(`[weekly] ✗ error for ${row.email}:`, e.message);
+    }
+  }
+}
+
+app.post('/admin/send-weekly-emails-now', async (req, res, next) => {
+  try {
+    const { secret } = req.query;
+    if (!secret || secret !== process.env.WEEKLY_EMAIL_ADMIN_SECRET)
+      return res.status(403).json({ error: 'Forbidden' });
+    res.json({ success: true, message: 'Weekly emails dispatching in background' });
+    sendWeeklyEmails().catch((e) => log('[weekly] manual trigger error:', e.message));
+  } catch (e) { next(e); }
 });
 
 // ===== ERROR HANDLER =====
@@ -778,5 +1030,11 @@ wss.on('connection', (ws) => {
 const PORT = process.env.PORT || 3000;
 
 initDb().catch((e) => console.error('[db] init failed', e.message));
+
+// Toda segunda-feira às 9:00, horário de Londres (ajusta BST/GMT automaticamente)
+cron.schedule('0 9 * * 1', () => {
+  sendWeeklyEmails().catch((e) => log('[weekly] cron error:', e.message));
+}, { timezone: 'Europe/London' });
+log('[cron] weekly email job scheduled — Mon 09:00 London time');
 
 server.listen(PORT, () => log(`HomeSafe Server running on port ${PORT}`));
