@@ -86,6 +86,17 @@ async function initDb() {
       CONSTRAINT   uq_carer_email UNIQUE (family_code, email)
     );
     CREATE INDEX IF NOT EXISTS idx_carer_emails_family ON carer_emails(family_code);
+    CREATE TABLE IF NOT EXISTS carers (
+      id           UUID PRIMARY KEY,
+      family_code  CHAR(8) NOT NULL REFERENCES families(code) ON DELETE CASCADE,
+      device_id    TEXT NOT NULL,
+      name         TEXT,
+      photo_base64 TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT   uq_carer_device UNIQUE (family_code, device_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_carers_family ON carers(family_code);
   `);
 
   // ===== MULTI-CARER MIGRATION =====
@@ -464,16 +475,26 @@ app.get('/family/carers/:code', async (req, res, next) => {
     const fam = await pool.query('SELECT 1 FROM families WHERE code = $1', [code]);
     if (fam.rowCount === 0) return res.status(404).json({ error: 'family not found' });
     const r = await pool.query(
-      `SELECT id, name, role, status, joined_at AS "joined_at"
-       FROM familiares
-       WHERE family_code = $1
-       ORDER BY CASE role
+      `SELECT f.id,
+              f.device_id              AS "deviceId",
+              COALESCE(c.name, f.name) AS name,
+              f.role,
+              f.status,
+              f.joined_at              AS "joined_at",
+              c.photo_base64           AS "photoBase64",
+              c.updated_at             AS "updatedAt"
+       FROM familiares f
+       LEFT JOIN carers c
+              ON c.family_code = f.family_code
+             AND c.device_id   = f.device_id
+       WHERE f.family_code = $1
+       ORDER BY CASE f.role
                   WHEN 'primary'   THEN 1
                   WHEN 'secondary' THEN 2
                   WHEN 'viewer'    THEN 3
                   ELSE 4
                 END,
-                joined_at ASC`,
+                f.joined_at ASC`,
       [code]
     );
     res.json({ carers: r.rows });
@@ -727,6 +748,36 @@ app.post('/carer/register-push-token', async (req, res, next) => {
     );
     log('carer/register-push-token', code, device_id);
     res.json({ success: true });
+  } catch (e) { next(e); }
+});
+
+// ===== CARER PROFILE =====
+app.post('/carer/update-profile', async (req, res, next) => {
+  try {
+    const { code, deviceId, name, photoBase64 } = req.body;
+    if (!code || !deviceId)
+      return res.status(400).json({ error: 'Missing code/deviceId' });
+    if (!(await familyExists(code)))
+      return res.status(404).json({ error: 'Código inválido' });
+    const r = await pool.query(
+      `INSERT INTO carers (id, family_code, device_id, name, photo_base64)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (family_code, device_id) DO UPDATE SET
+         name         = COALESCE(EXCLUDED.name,         carers.name),
+         photo_base64 = COALESCE(EXCLUDED.photo_base64, carers.photo_base64),
+         updated_at   = NOW()
+       RETURNING updated_at`,
+      [uuidv4(), code, deviceId, name ?? null, photoBase64 ?? null]
+    );
+    if (name) {
+      await pool.query(
+        `UPDATE familiares SET name = $1
+         WHERE family_code = $2 AND device_id = $3 AND status = 'active'`,
+        [name, code, deviceId]
+      );
+    }
+    log('carer/update-profile', code, deviceId);
+    res.json({ success: true, updatedAt: r.rows[0].updated_at });
   } catch (e) { next(e); }
 });
 
