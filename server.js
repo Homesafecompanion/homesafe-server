@@ -768,6 +768,14 @@ app.post('/family/sos-resolve', async (req, res, next) => {
     if (!code) return res.status(400).json({ error: 'Missing code' });
     if (!(await familyExists(code))) return res.status(404).json({ error: 'Code not found' });
 
+    // SELECT tokens FIRST — if no carers registered, skip DB writes
+    const tkRows = await pool.query(
+      'SELECT expo_token FROM push_tokens WHERE family_code = $1',
+      [code]
+    );
+    const tokens = tkRows.rows.map((r) => r.expo_token);
+    log('[sos-resolve] tokens encontrados:', tokens.length, '| code:', code);
+
     const resolvedAt = new Date().toISOString();
 
     await pool.query(
@@ -789,22 +797,19 @@ app.post('/family/sos-resolve', async (req, res, next) => {
       [JSON.stringify({ resolvedAt, resolvedBy: deviceId ?? null }), code]
     );
 
-    const tkRows = await pool.query(
-      'SELECT expo_token FROM push_tokens WHERE family_code = $1',
-      [code]
-    );
-    if (tkRows.rows.length > 0) {
-      const tokens = tkRows.rows.map((r) => r.expo_token);
+    if (tokens.length > 0) {
       const strings = SOS_STRINGS[lang] ?? SOS_STRINGS.en;
-      sendExpoPushNotifications(
-        tokens,
-        '✅ ' + strings.resolved,
-        strings.resolvedBody,
-        { type: 'sos_resolved', code, autoDismiss: true }
-      );
+      const pushTitle = '✅ ' + strings.resolved;
+      const pushBody = strings.resolvedBody;
+      const pushData = { type: 'sos_resolved', code, autoDismiss: true };
+      log('[sos-resolve] enviando push sos_resolved | tokens:', tokens.length, '| payload:', JSON.stringify(pushData));
+      await sendExpoPushNotifications(tokens, pushTitle, pushBody, pushData);
+      log('[sos-resolve] push sos_resolved enviado com sucesso');
+    } else {
+      log('[sos-resolve] nenhum token registrado — push não enviado');
     }
 
-    log('family/sos-resolve', code, deviceId ?? 'unknown');
+    log('[sos-resolve] concluído | code:', code, '| deviceId:', deviceId ?? 'unknown');
     res.json({ success: true });
   } catch (e) { next(e); }
 });
