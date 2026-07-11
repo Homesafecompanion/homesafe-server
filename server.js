@@ -97,6 +97,15 @@ async function initDb() {
       CONSTRAINT   uq_carer_device UNIQUE (family_code, device_id)
     );
     CREATE INDEX IF NOT EXISTS idx_carers_family ON carers(family_code);
+    CREATE TABLE IF NOT EXISTS sos_active_sessions (
+      id                    UUID PRIMARY KEY,
+      family_code           CHAR(8) NOT NULL REFERENCES families(code) ON DELETE CASCADE,
+      activated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      resolved_at           TIMESTAMPTZ,
+      resolved_by_device_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sos_active_sessions_family
+      ON sos_active_sessions(family_code, activated_at DESC);
   `);
 
   // ===== MULTI-CARER MIGRATION =====
@@ -224,9 +233,9 @@ async function familyExists(code) {
   return r.rowCount > 0;
 }
 
-async function sendExpoPushNotifications(tokens, title, body, data) {
+async function sendExpoPushNotifications(tokens, title, body, data, options = {}) {
   if (!tokens.length) return;
-  const messages = tokens.map((to) => ({ to, title, body, data, sound: 'default', priority: 'high' }));
+  const messages = tokens.map((to) => ({ to, title, body, data, sound: 'default', priority: 'high', ...options }));
   try {
     const res = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
@@ -680,9 +689,24 @@ app.get('/family/messages/:code', async (req, res, next) => {
 });
 
 // ===== SOS ALERTA =====
+const SOS_STRINGS = {
+  en: {
+    title: '🚨 SOS Alert',
+    body: 'Your loved one has triggered an emergency alert.',
+    resolved: 'Alert resolved',
+    resolvedBody: 'The emergency alert has been resolved.',
+  },
+  pt: {
+    title: '🚨 SOS Activado',
+    body: 'O seu ente querido ativou um alerta de emergência.',
+    resolved: 'Alerta resolvido',
+    resolvedBody: 'O alerta de emergência foi resolvido.',
+  },
+};
+
 app.post('/family/sos', async (req, res, next) => {
   try {
-    const { code, location, profile, type } = req.body;
+    const { code, location, profile, type, lang } = req.body;
     if (!code) return res.status(400).json({ error: 'Missing code' });
     if (!(await familyExists(code))) return res.status(404).json({ error: 'Código inválido' });
     const id = uuidv4();
@@ -691,6 +715,10 @@ app.post('/family/sos', async (req, res, next) => {
       `INSERT INTO sos_events (id, family_code, type, location, profile)
        VALUES ($1, $2, $3, $4, $5)`,
       [id, code, type ?? null, location ?? null, profile ?? null]
+    );
+    await pool.query(
+      `INSERT INTO sos_active_sessions (id, family_code) VALUES ($1, $2)`,
+      [uuidv4(), code]
     );
     const lastSOS = { location, profile, type, timestamp: ts };
     await pool.query(
@@ -706,11 +734,13 @@ app.post('/family/sos', async (req, res, next) => {
     );
     if (tkRows.rows.length > 0) {
       const tokens = tkRows.rows.map((r) => r.expo_token);
+      const strings = SOS_STRINGS[lang] ?? SOS_STRINGS.en;
       sendExpoPushNotifications(
         tokens,
-        '🚨 SOS Activado',
-        'O seu familiar ativou um alerta de emergência.',
-        { type: 'sos', code, sosType: type ?? null }
+        strings.title,
+        strings.body,
+        { type: 'sos_active', code, sosType: type ?? null, sticky: true },
+        { channelId: 'sos-alerts' }
       );
     }
     res.json({ success: true });
@@ -728,6 +758,54 @@ app.get('/family/sos/:code', async (req, res, next) => {
       [code]
     );
     res.json(r.rows);
+  } catch (e) { next(e); }
+});
+
+// ===== SOS RESOLVE =====
+app.post('/family/sos-resolve', async (req, res, next) => {
+  try {
+    const { code, deviceId, lang } = req.body;
+    if (!code) return res.status(400).json({ error: 'Missing code' });
+    if (!(await familyExists(code))) return res.status(404).json({ error: 'Code not found' });
+
+    const resolvedAt = new Date().toISOString();
+
+    await pool.query(
+      `UPDATE sos_active_sessions
+       SET resolved_at = $1, resolved_by_device_id = $2
+       WHERE id = (
+         SELECT id FROM sos_active_sessions
+         WHERE family_code = $3 AND resolved_at IS NULL
+         ORDER BY activated_at DESC
+         LIMIT 1
+       )`,
+      [resolvedAt, deviceId ?? null, code]
+    );
+
+    await pool.query(
+      `UPDATE families
+       SET dados = dados || jsonb_build_object('lastSOSResolved', $1::jsonb), updated_at = NOW()
+       WHERE code = $2`,
+      [JSON.stringify({ resolvedAt, resolvedBy: deviceId ?? null }), code]
+    );
+
+    const tkRows = await pool.query(
+      'SELECT expo_token FROM push_tokens WHERE family_code = $1',
+      [code]
+    );
+    if (tkRows.rows.length > 0) {
+      const tokens = tkRows.rows.map((r) => r.expo_token);
+      const strings = SOS_STRINGS[lang] ?? SOS_STRINGS.en;
+      sendExpoPushNotifications(
+        tokens,
+        '✅ ' + strings.resolved,
+        strings.resolvedBody,
+        { type: 'sos_resolved', code, autoDismiss: true }
+      );
+    }
+
+    log('family/sos-resolve', code, deviceId ?? 'unknown');
+    res.json({ success: true });
   } catch (e) { next(e); }
 });
 
