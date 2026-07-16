@@ -761,6 +761,33 @@ app.get('/family/sos/:code', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ===== SOS ACTIVE CHECK =====
+app.get('/family/sos-active/:code', async (req, res, next) => {
+  try {
+    const code = req.params.code;
+    if (!(await familyExists(code))) return res.status(404).json({ error: 'Não encontrado' });
+    const r = await pool.query(
+      `SELECT
+         s.id,
+         s.activated_at AS "activatedAt",
+         (SELECT e.type FROM sos_events e WHERE e.family_code = s.family_code ORDER BY e.ts DESC LIMIT 1) AS mode
+       FROM sos_active_sessions s
+       WHERE s.family_code = $1 AND s.resolved_at IS NULL
+       ORDER BY s.activated_at DESC
+       LIMIT 1`,
+      [code]
+    );
+    if (r.rows.length === 0) {
+      return res.json({ active: false, session: null });
+    }
+    const row = r.rows[0];
+    res.json({
+      active: true,
+      session: { id: row.id, activatedAt: row.activatedAt, mode: row.mode ?? null },
+    });
+  } catch (e) { next(e); }
+});
+
 // ===== SOS RESOLVE =====
 app.post('/family/sos-resolve', async (req, res, next) => {
   try {
